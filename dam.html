@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Game Dam vs Komputer</title>
+<style>
+  body { display:flex; justify-content:center; align-items:center; height:100vh; background:#888; }
+  canvas { background:#55fff; box-shadow:0 0 10px #000; cursor:pointer; }
+</style>
+</head>
+<body>
+<canvas id="board" width="480" height="480"></canvas>
+<script>
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+const size = 8;
+const tile = canvas.width / size;
+let board = [];
+let selected = null;
+let turn = "R"; // R = Player (Merah), B = Komputer (Hitam)
+
+// Inisialisasi papan
+function initBoard() {
+  board = Array(size).fill().map(() => Array(size).fill(null));
+  for (let r=0;r<size;r++){
+    for (let c=0;c<size;c++){
+      if ((r+c)%2===1){
+        if (r<3) board[r][c] = {color:"B", king:false};
+        if (r>4) board[r][c] = {color:"R", king:false};
+      }
+    }
+  }
+}
+
+// Gambar papan
+function drawBoard() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for (let r=0;r<size;r++){
+    for (let c=0;c<size;c++){
+      ctx.fillStyle=(r+c)%2===0?"#eee":"#555";
+      ctx.fillRect(c*tile,r*tile,tile,tile);
+      let piece = board[r][c];
+      if(piece){
+        ctx.beginPath();
+        ctx.arc(c*tile+tile/2,r*tile+tile/2,tile/2-5,0,Math.PI*2);
+        ctx.fillStyle = piece.color==="R"?"red":"black";
+        ctx.fill();
+        if(piece.king){
+          ctx.strokeStyle="gold";
+          ctx.lineWidth=3;
+          ctx.stroke();
+        }
+        if(selected && selected.r===r && selected.c===c){
+          ctx.strokeStyle="yellow";
+          ctx.lineWidth=3;
+          ctx.stroke();
+        }
+      }
+    }
+  }
+}
+
+// Cek dalam batas
+function inBounds(r,c){ return r>=0 && r<size && c>=0 && c<size; }
+
+// Dapatkan semua gerakan untuk sebuah bidak
+function getMoves(r,c,multiJump=false){
+  let piece = board[r][c];
+  if(!piece) return [];
+  let moves=[];
+
+  // arah bidak
+  let dirs = piece.king ? [[-1,-1],[-1,1],[1,-1],[1,1]] : (piece.color==="R"? [[-1,-1],[-1,1]] : [[1,-1],[1,1]]);
+
+  for(let [dr,dc] of dirs){
+    let nr=r+dr, nc=c+dc;
+    if(piece.king){
+      // Raja bergerak panjang
+      while(inBounds(nr,nc) && !board[nr][nc]){
+        if(!multiJump) moves.push({r:nr,c:nc});
+        nr += dr; nc += dc;
+      }
+      // cek makan panjang
+      if(inBounds(nr,nc) && board[nr][nc] && board[nr][nc].color!==piece.color){
+        let jr=nr+dr, jc=nc+dc;
+        while(inBounds(jr,jc) && !board[jr][jc]){
+          moves.push({r:jr,c:jc,jump:{r:nr,c:nc}});
+          jr += dr; jc += dc;
+        }
+      }
+    } else {
+      // Bidak biasa
+      if(inBounds(nr,nc) && !board[nr][nc]) moves.push({r:nr,c:nc});
+      let jr=r+dr*2,jc=c+dc*2;
+      if(inBounds(jr,jc) && !board[jr][jc] && board[nr][nc] && board[nr][nc].color!==piece.color){
+        moves.push({r:jr,c:jc,jump:{r:nr,c:nc}});
+      }
+    }
+  }
+  return moves;
+}
+
+// Makan atau gerak bidak
+function movePiece(fr,fc,tr,tc,jump){
+  let piece = board[fr][fc];
+  board[tr][tc] = piece;
+  board[fr][fc]=null;
+  if(jump) board[jump.r][jump.c]=null;
+  // naik jadi king
+  if((piece.color==="R" && tr===0) || (piece.color==="B" && tr===size-1)){
+    piece.king = true;
+  }
+  // cek multi-jump
+  if(jump){
+    let nextJumps = getMoves(tr,tc,true).filter(m=>m.jump);
+    if(nextJumps.length){
+      selected={r:tr,c:tc};
+      drawBoard();
+      return true;
+    }
+  }
+  selected=null;
+  return false;
+}
+
+// Klik pemain
+function handleClick(e){
+  if(turn!=="R") return;
+  let x=e.offsetX, y=e.offsetY;
+  let r=Math.floor(y/tile), c=Math.floor(x/tile);
+  if(selected){
+    let moves=getMoves(selected.r,selected.c);
+    let m=moves.find(m=>m.r===r && m.c===c);
+    if(m){
+      let multi = movePiece(selected.r,selected.c,r,c,m.jump);
+      if(!multi){
+        turn="B";
+        drawBoard();
+        setTimeout(aiMove,500);
+      }
+      return;
+    }
+  }
+  if(board[r][c] && board[r][c].color==="R") selected={r,c};
+  else selected=null;
+  drawBoard();
+}
+  
+function getAllJumps(color){
+  let all=[];
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      let piece = board[r][c];
+      if(piece && piece.color===color){
+        let moves = getMoves(r,c,true).filter(m=>m.jump);
+        for(let m of moves){
+          all.push({fr:r,fc:c,...m, king: piece.king});
+        }
+      }
+    }
+  }
+  return all;
+}
+
+// AI sederhana
+function aiMove(){
+  let jumps = getAllJumps("B");
+  let choice;
+  if(jumps.length){
+    // Prioritas raja
+    let kings = jumps.filter(j=>j.king);
+    if(kings.length) jumps = kings;
+
+    // Pilih jump terpanjang (multi-jump)
+    let maxLen = Math.max(...jumps.map(j=>{
+      let len = 1;
+      let tempBoard = JSON.parse(JSON.stringify(board));
+      movePiece(j.fr,j.fc,j.r,j.c,j.jump);
+      while(true){
+        let nextJumps = getMoves(j.r,j.c,true).filter(m=>m.jump);
+        if(nextJumps.length) { j = nextJumps[0]; len++; }
+        else break;
+      }
+      board = JSON.parse(JSON.stringify(tempBoard));
+      return len;
+    }));
+    let bestJumps = jumps.filter(j=>true); // bisa pilih random dari yang maksimal
+    choice = bestJumps[Math.floor(Math.random()*bestJumps.length)];
+  } else {
+    // Tidak ada jump, pilih gerakan biasa
+    let all=[];
+    for(let r=0;r<size;r++){
+      for(let c=0;c<size;c++){
+        let piece = board[r][c];
+        if(piece && piece.color==="B"){
+          let moves=getMoves(r,c);
+          for(let m of moves) all.push({fr:r,fc:c,...m, king: piece.king});
+        }
+      }
+    }
+    if(all.length===0){ alert("Anda Menang!"); return; }
+    choice = all[Math.floor(Math.random()*all.length)];
+  }
+
+  let multi = movePiece(choice.fr,choice.fc,choice.r,choice.c,choice.jump);
+  if(multi){
+    turn="B";
+    setTimeout(aiMove,500);
+  } else {
+    turn="R";
+    drawBoard();
+  }
+}
+canvas.addEventListener("click",handleClick);
+
+initBoard();
+drawBoard();
+</script>
+</body>
+</html>
